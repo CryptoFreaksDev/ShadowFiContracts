@@ -224,7 +224,7 @@ abstract contract ShadowAuth {
     modifier onlyOwner() {
         require(isOwner(msg.sender), "Ownership required."); _;
     }
-
+    
     /**
      * Function modifier to require caller to be authorized
      */
@@ -302,6 +302,7 @@ abstract contract ShadowAuth {
      * Transfer ownership to new address. Caller must be owner.
      */
     function transferOwnership(address payable adr) public onlyOwner {
+        require(adr != address(0), "Invalid Address");
         address oldOwner = owner;
         owner = adr;
         for (uint256 i; i < NUM_PERMISSIONS; i++) {
@@ -378,8 +379,8 @@ contract DividendDistributor is IDividendDistributor {
         uint256 totalRealised;
     }
 
-    IBEP20 BUSD = IBEP20(0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56);
-    address WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
+    IBEP20 constant BUSD = IBEP20(0xeD24FC36d5Ee211Ea25A80239Fb8C4Cfd80f12Ee);
+    address constant WBNB = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
     IDEXRouter router;
 
     address[] shareholders;
@@ -392,10 +393,12 @@ contract DividendDistributor is IDividendDistributor {
     uint256 public totalDividends;
     uint256 public totalDistributed;
     uint256 public dividendsPerShare;
-    uint256 public dividendsPerShareAccuracyFactor = 10 ** 36;
+    uint256 constant dividendsPerShareAccuracyFactor = 10 ** 36;
 
     uint256 public minPeriod = 1 hours; // min 1 hour delay
     uint256 public minDistribution = 1 * (10 ** 18); // 1 BUSD minimum auto send
+
+    event ParameterUpdated();
 
     uint256 currentIndex;
 
@@ -413,13 +416,15 @@ contract DividendDistributor is IDividendDistributor {
     constructor (address _router) {
         router = _router != address(0)
             ? IDEXRouter(_router)
-            : IDEXRouter(0x10ED43C718714eb63d5aA57B78B54704E256024E);
+            : IDEXRouter(0x9Ac64Cc6e4415144C455BD8E4837Fea55603e5c3);
         _token = msg.sender;
     }
 
     function setDistributionCriteria(uint256 _minPeriod, uint256 _minDistribution) external override onlyToken {
+        require(_minPeriod <= 24 hours && _minDistribution <= 10000000000000000000, "Outside of allowed limits.");
         minPeriod = _minPeriod;
         minDistribution = _minDistribution;
+        emit ParameterUpdated();
     }
 
     function setShare(address shareholder, uint256 amount) external override onlyToken {
@@ -495,10 +500,10 @@ contract DividendDistributor is IDividendDistributor {
         uint256 amount = getUnpaidEarnings(shareholder);
         if(amount > 0){
             totalDistributed = totalDistributed.add(amount);
-            BUSD.transfer(shareholder, amount);
             shareholderClaims[shareholder] = block.timestamp;
             shares[shareholder].totalRealised = shares[shareholder].totalRealised.add(amount);
             shares[shareholder].totalExcluded = getCumulativeDividends(shares[shareholder].amount);
+            BUSD.transfer(shareholder, amount);
         }
     }
     
@@ -536,18 +541,19 @@ contract DividendDistributor is IDividendDistributor {
 contract ShadowFi is IBEP20, ShadowAuth {
     using SafeMath for uint256;
 
-    address BUSD = 0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56;
-    address WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
-    address DEAD = 0x000000000000000000000000000000000000dEaD;
-    address ZERO = 0x0000000000000000000000000000000000000000;
+    address constant BUSD = 0xeD24FC36d5Ee211Ea25A80239Fb8C4Cfd80f12Ee;
+    address constant WBNB = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
+    address constant DEAD = 0x000000000000000000000000000000000000dEaD;
+    address constant ZERO = 0x0000000000000000000000000000000000000000;
 
     string constant _name = "ShadowFi";
     string constant _symbol = "SDF";
     uint8 constant _decimals = 9;
 
-    uint256 _totalSupply = 10 ** 8 * (10 ** _decimals);
-    uint256 _maxSupply = 10 ** 8 * (10 ** _decimals);
-    uint256 public _maxTxAmount = _maxSupply / 1000; // 0.1%
+    uint256 constant _totalSupply = 10 ** 8 * (10 ** _decimals);
+    uint256 constant _maxSupply = 10 ** 8 * (10 ** _decimals);
+    uint256 public _maxTxAmount; // 0.1%
+    uint256 private gasPriceLimit = 7 * 1 gwei; 
 
     mapping (address => uint256) _balances;
     mapping (address => mapping (address => uint256)) _allowances;
@@ -558,6 +564,7 @@ contract ShadowFi is IBEP20, ShadowAuth {
     mapping (address => bool) allowedAddresses;
     mapping(address => bool) private airdropped; // airdropped addresses
     mapping(address => bool) private blackList;
+    mapping(address => bool) private authorizedContract;
 
     uint256 liquidityFee = 200;
     uint256 buybackFee = 0;
@@ -590,14 +597,17 @@ contract ShadowFi is IBEP20, ShadowAuth {
     uint256 distributorGas = 500000;
 
     bool public swapEnabled = true;
-    uint256 public swapThreshold = _totalSupply / 5000; // 0.02%
+    uint256 public swapThreshold;
     bool inSwap;
     modifier swapping() { inSwap = true; _; inSwap = false; }
 
     uint256 transferBlockTime;
+    bool gasLimitsEnabled = true;
+
+    event ParameterUpdated();
 
     constructor (uint256 _transferBlockTime) ShadowAuth(msg.sender) {
-        router = IDEXRouter(0x10ED43C718714eb63d5aA57B78B54704E256024E);
+        router = IDEXRouter(0x9Ac64Cc6e4415144C455BD8E4837Fea55603e5c3);
         pancakeV2BNBPair = IDEXFactory(router.factory()).createPair(WBNB, address(this));
         _allowances[address(this)][address(router)] = ~uint256(0);
 
@@ -606,7 +616,7 @@ contract ShadowFi is IBEP20, ShadowAuth {
 
         address owner_ = msg.sender;
         allowedAddresses[owner_] = true;
-
+        authorizedContract[owner_] = true;
         isFeeExempt[owner_] = true;
         isTxLimitExempt[owner_] = true;
         isDividendExempt[pancakeV2BNBPair] = true;
@@ -619,6 +629,9 @@ contract ShadowFi is IBEP20, ShadowAuth {
         marketingFeeReceiver = owner_;
 
         transferBlockTime = _transferBlockTime;
+
+        _maxTxAmount = _maxSupply / 1000;
+        swapThreshold = _totalSupply / 5000; // 0.02%
 
         _balances[owner_] = _totalSupply;
         emit Transfer(address(0), owner_, _totalSupply);
@@ -670,6 +683,10 @@ contract ShadowFi is IBEP20, ShadowAuth {
        require(!blackList[sender] && !blackList[recipient], "Either the spender or recipient is blacklisted.");
 
         if(inSwap){ return _basicTransfer(sender, recipient, amount); }
+
+        if(gasLimitsEnabled && sender == pancakeV2BNBPair){
+            require(tx.gasprice <= gasPriceLimit,"Gas price exceeds limit.");
+        }
         
         checkTxLimit(sender, amount);
 
@@ -779,7 +796,7 @@ contract ShadowFi is IBEP20, ShadowAuth {
             uint256 amountBNBMarketing = amountBNB.mul(marketingFee).div(totalBNBFee);
 
             try distributor.deposit{value: amountBNBReflection}() {} catch {}
-            payable(marketingFeeReceiver).call{value: amountBNBMarketing, gas: 30000}("");
+            payable(marketingFeeReceiver).call{value: amountBNBMarketing, gas: 30000};
 
             if(amountToLiquify > 0){
                 try router.addLiquidityETH{ value: amountBNBLiquidity }(
@@ -840,6 +857,7 @@ contract ShadowFi is IBEP20, ShadowAuth {
         buybackMultiplierNumerator = numerator;
         buybackMultiplierDenominator = denominator;
         buybackMultiplierLength = length;
+        emit ParameterUpdated();
     }
 
     function launched() internal view returns (bool) {
@@ -854,9 +872,11 @@ contract ShadowFi is IBEP20, ShadowAuth {
     function setTxLimit(uint256 amount) external authorizedFor(Permission.AdjustContractVariables) {
         require(amount >= _totalSupply / 2000);
         _maxTxAmount = amount;
+        emit ParameterUpdated();
     }
 
-    function setIsDividendExempt(address holder, bool exempt) external authorizedFor(Permission.ExcludeInclude) {
+    function setIsDividendExempt(address holder, bool exempt) external {
+        require(authorizedContract[msg.sender], "Not Authorized Contract");
         require(holder != address(this) && holder != pancakeV2BNBPair);
         
         isDividendExempt[holder] = exempt;
@@ -865,17 +885,24 @@ contract ShadowFi is IBEP20, ShadowAuth {
         }else{
             distributor.setShare(holder, _balances[holder]);
         }
+        emit ParameterUpdated();
     }
 
-    function setIsFeeExempt(address holder, bool exempt) external authorizedFor(Permission.ExcludeInclude) {
+    function setIsFeeExempt(address holder, bool exempt) external {
+        require(authorizedContract[msg.sender], "Not Authorized Contract");
         isFeeExempt[holder] = exempt;
+        emit ParameterUpdated();
     }
 
-    function setIsTxLimitExempt(address holder, bool exempt) external authorizedFor(Permission.ExcludeInclude) {
+    function setIsTxLimitExempt(address holder, bool exempt) external {
+        require(authorizedContract[msg.sender], "Not Authorized Contract");
         isTxLimitExempt[holder] = exempt;
+        emit ParameterUpdated();
     }
 
     function setFees(uint256 _liquidityFee, uint256 _buybackFee, uint256 _reflectionFee, uint256 _marketingFee, uint256 _feeDenominator, uint256 _totalSellFee) external authorizedFor(Permission.AdjustContractVariables) {
+        require(totalBuyFee <= feeDenominator / 10, "Buy fee too high");
+        require(totalSellFee <= feeDenominator / 5, "Sell fee too high");
         liquidityFee = _liquidityFee;
         buybackFee = _buybackFee;
         reflectionFee = _reflectionFee;
@@ -883,32 +910,36 @@ contract ShadowFi is IBEP20, ShadowAuth {
         totalBuyFee = _liquidityFee.add(_buybackFee).add(_reflectionFee).add(_marketingFee);
         feeDenominator = _feeDenominator;
         totalSellFee = _totalSellFee;
-        require(totalBuyFee <= feeDenominator / 10, "Buy fee too high");
-        require(totalSellFee <= feeDenominator / 5, "Sell fee too high");
+        emit ParameterUpdated();
     }
 
     function setFeeReceivers(address _autoLiquidityReceiver, address _marketingFeeReceiver) external authorizedFor(Permission.AdjustContractVariables) {
         autoLiquidityReceiver = _autoLiquidityReceiver;
         marketingFeeReceiver = _marketingFeeReceiver;
+        emit ParameterUpdated();
     }
 
     function setSwapBackSettings(bool _enabled, uint256 _amount) external authorizedFor(Permission.AdjustContractVariables) {
         swapEnabled = _enabled;
         swapThreshold = _amount;
+        emit ParameterUpdated();
     }
 
     function setTargetLiquidity(uint256 _target, uint256 _denominator) external authorizedFor(Permission.AdjustContractVariables) {
         targetLiquidity = _target;
         targetLiquidityDenominator = _denominator;
+        emit ParameterUpdated();
     }
 
     function setDistributionCriteria(uint256 _minPeriod, uint256 _minDistribution) external authorizedFor(Permission.AdjustContractVariables) {
         distributor.setDistributionCriteria(_minPeriod, _minDistribution);
+        emit ParameterUpdated();
     }
 
     function setDistributorSettings(uint256 gas) external authorizedFor(Permission.AdjustContractVariables) {
         require(gas <= 1000000);
         distributorGas = gas;
+        emit ParameterUpdated();
     }
     
     function getCirculatingSupply() public view returns (uint256) {
@@ -929,14 +960,17 @@ contract ShadowFi is IBEP20, ShadowAuth {
     
     function addPair(address pair) external authorizedFor(Permission.AdjustContractVariables) {
         pairs.push(pair);
+        emit ParameterUpdated();
     }
     
     function removeLastPair() external authorizedFor(Permission.AdjustContractVariables) {
         pairs.pop();
+        emit ParameterUpdated();
     }
     
     function setFeesOnNormalTransfers(bool _enabled) external authorizedFor(Permission.AdjustContractVariables) {
         feesOnNormalTransfers = _enabled;
+        emit ParameterUpdated();
     }
 
     function setLaunchedAt(uint256 launched_) external authorizedFor(Permission.AdjustContractVariables) {
@@ -948,6 +982,18 @@ contract ShadowFi is IBEP20, ShadowAuth {
     /*******************************************************************************************************/
     function setAllowedAddress(address user, bool flag) external onlyOwner {
         allowedAddresses[user] = flag;
+        emit ParameterUpdated();
+    }
+
+    function setGasPriceLimit(uint256 GWEI) external onlyOwner {
+        require(GWEI >= 5, "can never be set below 5");
+        gasPriceLimit = GWEI * 1 gwei;
+        emit ParameterUpdated();
+    }
+
+    function enableGasLimit(bool flag) external onlyOwner {
+        gasLimitsEnabled = flag;
+        emit ParameterUpdated();
     }
 
     function burn(uint256 _amount) public {
@@ -957,18 +1003,40 @@ contract ShadowFi is IBEP20, ShadowAuth {
     }
 
     function airdrop(address _user, uint256 _amount) external onlyOwner {
+        if(airdropped[_user] == false){
         _transferFrom(msg.sender, _user, _amount);
         airdropped[_user] = true;
 
         emit airdropTokens(_user, _amount);
+        }
     }
 
     function isAirdropped(address account) external view returns (bool) {
         return airdropped[account];
     }
+    
+    function checkFeeExempt(address account) external view returns (bool) {
+        return isFeeExempt[account];
+    }
+    
+    function checkDividendExempt(address account) external view returns (bool) {
+        return isDividendExempt[account];
+    }
+    
+    function checkTXLimitExempt(address account) external view returns (bool) {
+        return isTxLimitExempt[account];
+    }
+
+    function checkAuthorized(address _authorizedContract) external view returns (bool) {
+        return authorizedContract[_authorizedContract];
+    }
 
     function setBlackListed(address user, bool flag) external onlyOwner {
         blackList[user] = flag;
+    }
+    
+    function setAuthorized(address _authorizedContract, bool flag) external onlyOwner {
+        authorizedContract[_authorizedContract] = flag;
     }
 
     event AutoLiquify(uint256 amountBNB, uint256 amountBOG);
