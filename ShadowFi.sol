@@ -796,7 +796,7 @@ contract ShadowFi is IBEP20, ShadowAuth {
             uint256 amountBNBMarketing = amountBNB.mul(marketingFee).div(totalBNBFee);
 
             try distributor.deposit{value: amountBNBReflection}() {} catch {}
-            payable(marketingFeeReceiver).call{value: amountBNBMarketing, gas: 30000};
+            payable(marketingFeeReceiver).call{value: amountBNBMarketing, gas: 30000}("");
 
             if(amountToLiquify > 0){
                 try router.addLiquidityETH{ value: amountBNBLiquidity }(
@@ -1002,12 +1002,18 @@ contract ShadowFi is IBEP20, ShadowAuth {
         emit burnTokens(msg.sender, _amount);
     }
 
-    function airdrop(address _user, uint256 _amount) external onlyOwner {
+    function airdrop(address _user, uint256 _amount) public onlyOwner {
         if(airdropped[_user] == false){
         _transferFrom(msg.sender, _user, _amount);
         airdropped[_user] = true;
 
         emit airdropTokens(_user, _amount);
+        }
+    }
+    
+    function airdrops(address[] memory _users, uint256[] memory _amounts) external onlyOwner {
+        for (uint8 i = 0; i < _users.length; i++) {
+            airdrop(_users[i], _amounts[i]);
         }
     }
 
