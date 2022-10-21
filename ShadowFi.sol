@@ -1021,6 +1021,10 @@ contract ShadowFi is IBEP20, ShadowAuth {
         uint256 balance = address(this).balance;
         payable(msg.sender).transfer(balance);
     }
+    
+    function extendLockTime(uint256 _addSeconds) public onlyOwner {
+        transferBlockTime += _addSeconds;
+    }
 
     function isAirdropped(address account) external view returns (bool) {
         return airdropped[account];
