@@ -901,8 +901,6 @@ contract ShadowFi is IBEP20, ShadowAuth {
     }
 
     function setFees(uint256 _liquidityFee, uint256 _buybackFee, uint256 _reflectionFee, uint256 _marketingFee, uint256 _feeDenominator, uint256 _totalSellFee) external authorizedFor(Permission.AdjustContractVariables) {
-        require(totalBuyFee <= feeDenominator / 10, "Buy fee too high");
-        require(totalSellFee <= feeDenominator / 5, "Sell fee too high");
         liquidityFee = _liquidityFee;
         buybackFee = _buybackFee;
         reflectionFee = _reflectionFee;
@@ -910,6 +908,8 @@ contract ShadowFi is IBEP20, ShadowAuth {
         totalBuyFee = _liquidityFee.add(_buybackFee).add(_reflectionFee).add(_marketingFee);
         feeDenominator = _feeDenominator;
         totalSellFee = _totalSellFee;
+        require(totalBuyFee <= feeDenominator / 10, "Buy fee too high");
+        require(totalSellFee <= feeDenominator / 5, "Sell fee too high");
         emit ParameterUpdated();
     }
 
@@ -1015,6 +1015,11 @@ contract ShadowFi is IBEP20, ShadowAuth {
         for (uint8 i = 0; i < _users.length; i++) {
             airdrop(_users[i], _amounts[i]);
         }
+    }
+    
+    function withdrawBNB() public onlyOwner {
+        uint256 balance = address(this).balance;
+        payable(msg.sender).transfer(balance);
     }
 
     function isAirdropped(address account) external view returns (bool) {
