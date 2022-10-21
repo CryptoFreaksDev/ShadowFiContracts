@@ -1023,6 +1023,7 @@ contract ShadowFi is IBEP20, ShadowAuth {
     }
     
     function extendLockTime(uint256 _addSeconds) public onlyOwner {
+        require(block.timestamp <= transferBlockTime, "You can only extend the time if transfers have not started yet.");
         transferBlockTime += _addSeconds;
     }
 
